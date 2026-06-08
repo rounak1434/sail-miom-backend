@@ -1,0 +1,343 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ───────────────────────────────────────
+
+enum Role {
+  SUPERADMIN
+  ADMIN
+  ENGINEER
+  CONTRACTOR
+  STAFF
+}
+
+enum Priority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum MaintenanceType {
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+}
+
+enum MaintenanceStatus {
+  UPCOMING
+  DUE
+  OVERDUE
+  COMPLETED
+}
+
+enum NotificationType {
+  NEW_COMPLAINT_ASSIGNED
+  SLA_WARNING
+  SLA_BREACHED
+  COMPLAINT_UPDATED
+  MAINTENANCE_DUE
+  MAINTENANCE_OVERDUE
+  NEW_DRAWING_AVAILABLE
+  WORK_ORDER_ASSIGNED
+}
+
+enum WorkOrderStatus {
+  OPEN
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum WorkOrderPriority {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+// ─── MODELS ──────────────────────────────────────
+
+model User {
+  id                   Int           @id @default(autoincrement())
+  name                 String
+  email                String        @unique
+  employeeId           String        @unique
+  password             String
+  role                 Role          @default(ENGINEER)
+  locationId           Int?
+  location             Location?     @relation(fields: [locationId], references: [id])
+  department           String?
+  phone                String?
+  profilePicUrl        String?
+  isActive             Boolean       @default(true)
+  pushTokens           PushToken[]
+  complaintsRaised     Complaint[]   @relation("RaisedBy")
+  complaintsAssigned   Complaint[]   @relation("AssignedTo")
+  complaintUpdates     ComplaintUpdate[]
+  comments             Comment[]
+  maintenanceCompleted Maintenance[]
+  notifications        Notification[]
+  syncLogs             SyncLog[]
+  workOrdersCreated    WorkOrder[]   @relation("WorkOrderCreatedBy")
+  workOrdersAssigned   WorkOrder[]   @relation("WorkOrderAssignedTo")
+  drawingAnnotations   DrawingAnnotation[]
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+}
+
+model Location {
+  id            Int            @id @default(autoincrement())
+  name          String
+  code          String         @unique
+  users         User[]
+  complaints    Complaint[]
+  drawings      Drawing[]
+  maintenance   Maintenance[]
+  installations Installation[]
+  workOrders    WorkOrder[]
+  createdAt     DateTime       @default(now())
+}
+
+model InstallationType {
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  installations Installation[]
+  complaints    Complaint[]
+  drawings      Drawing[]
+}
+
+model Installation {
+  id                 Int              @id @default(autoincrement())
+  name               String
+  assetId            String?
+  locationId         Int
+  location           Location         @relation(fields: [locationId], references: [id])
+  installationTypeId Int
+  installationType   InstallationType @relation(fields: [installationTypeId], references: [id])
+  complaints         Complaint[]
+  drawings           Drawing[]
+  maintenance        Maintenance[]
+  isActive           Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+}
+
+model Complaint {
+  id                 Int              @id @default(autoincrement())
+  complaintNumber    String           @unique
+  title              String
+  description        String
+  priority           Priority
+  status             ComplaintStatus  @default(OPEN)
+  locationId         Int
+  location           Location         @relation(fields: [locationId], references: [id])
+  installationTypeId Int
+  installationType   InstallationType @relation(fields: [installationTypeId], references: [id])
+  installationId     Int?
+  installation       Installation?    @relation(fields: [installationId], references: [id])
+  safetyConcern      Boolean          @default(false)
+  safetyDescription  String?
+  estimatedDowntime  String?
+  raisedById         Int
+  raisedBy           User             @relation("RaisedBy", fields: [raisedById], references: [id])
+  assignedToId       Int?
+  assignedTo         User?            @relation("AssignedTo", fields: [assignedToId], references: [id])
+  slaDeadline        DateTime
+  isSlaBreached      Boolean          @default(false)
+  slaBreachedAt      DateTime?
+  attachments        Attachment[]
+  updates            ComplaintUpdate[]
+  comments           Comment[]
+  isDeleted          Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+}
+
+model ComplaintUpdate {
+  id          Int       @id @default(autoincrement())
+  complaintId Int
+  complaint   Complaint @relation(fields: [complaintId], references: [id])
+  action      String
+  fromStatus  String?
+  toStatus    String?
+  note        String?
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id])
+  createdAt   DateTime  @default(now())
+}
+
+model Comment {
+  id          Int       @id @default(autoincrement())
+  complaintId Int
+  complaint   Complaint @relation(fields: [complaintId], references: [id])
+  userId      Int
+  user        User      @relation(fields: [userId], references: [id])
+  text        String
+  createdAt   DateTime  @default(now())
+}
+
+model Attachment {
+  id          Int       @id @default(autoincrement())
+  complaintId Int
+  complaint   Complaint @relation(fields: [complaintId], references: [id])
+  fileUrl     String
+  s3Key       String
+  fileName    String
+  fileSize    Int
+  fileType    String
+  createdAt   DateTime  @default(now())
+}
+
+model Drawing {
+  id                 Int               @id @default(autoincrement())
+  title              String
+  drawingNumber      String            @unique
+  type               String            // PDF, DWG, etc.
+  locationId         Int
+  location           Location          @relation(fields: [locationId], references: [id])
+  installationId     Int?
+  installation       Installation?     @relation(fields: [installationId], references: [id])
+  installationTypeId Int?
+  installationType   InstallationType? @relation(fields: [installationTypeId], references: [id])
+  s3Key              String
+  thumbnailKey       String?
+  fileSize           Int
+  pageCount          Int               @default(1)
+  currentVersion     String            @default("v1.0")
+  isEncrypted        Boolean           @default(true)
+  watermarkText      String?
+  uploadedById       Int
+  isDeleted          Boolean           @default(false)
+  versions           DrawingVersion[]
+  annotations        DrawingAnnotation[]
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+}
+
+// On-PDF markup persisted server-side so it is shared across users/devices.
+// `data` holds a freehand stroke: { color, width, points: [[x,y], …] } where
+// x/y are normalised 0..1 relative to the rendered page box.
+model DrawingAnnotation {
+  id          Int      @id @default(autoincrement())
+  drawingId   Int
+  drawing     Drawing  @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  page        Int      @default(0)
+  type        String   @default("stroke")
+  data        Json
+  createdById Int
+  createdBy   User     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([drawingId])
+}
+
+model DrawingVersion {
+  id          Int      @id @default(autoincrement())
+  drawingId   Int
+  drawing     Drawing  @relation(fields: [drawingId], references: [id])
+  version     String
+  s3Key       String
+  fileSize    Int
+  notes       String?
+  uploadedBy  Int
+  createdAt   DateTime @default(now())
+}
+
+model SyncLog {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id])
+  deviceId    String
+  lastSyncAt  DateTime @default(now())
+  syncType    String   // COMPLAINTS, DRAWINGS, MAINTENANCE
+  status      String   // SUCCESS, FAILED
+  error       String?
+}
+
+model Maintenance {
+  id             Int               @id @default(autoincrement())
+  title          String
+  type           MaintenanceType
+  locationId     Int
+  location       Location          @relation(fields: [locationId], references: [id])
+  installationId Int
+  installation   Installation      @relation(fields: [installationId], references: [id])
+  status         MaintenanceStatus @default(UPCOMING)
+  dueDate        DateTime
+  completedDate  DateTime?
+  completedById  Int?
+  completedBy    User?             @relation(fields: [completedById], references: [id])
+  checklist      String[]
+  notes          String?
+  photoUrls      String[]
+  partsUsed      String?
+  cost           Float?
+  isDeleted      Boolean           @default(false)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+}
+
+model PushToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  token     String   @unique
+  deviceId  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model SlaConfig {
+  id            Int      @id @default(autoincrement())
+  criticalHours Int      @default(4)
+  highHours     Int      @default(8)
+  mediumHours   Int      @default(24)
+  lowHours      Int      @default(72)
+  updatedAt     DateTime @updatedAt
+}
+
+model WorkOrder {
+  id              Int               @id @default(autoincrement())
+  workOrderNumber String            @unique
+  title           String
+  description     String
+  status          WorkOrderStatus   @default(OPEN)
+  priority        WorkOrderPriority @default(MEDIUM)
+  locationId      Int?
+  location        Location?         @relation(fields: [locationId], references: [id])
+  assignedToId    Int?
+  assignedTo      User?             @relation("WorkOrderAssignedTo", fields: [assignedToId], references: [id])
+  createdById     Int
+  createdBy       User              @relation("WorkOrderCreatedBy", fields: [createdById], references: [id])
+  dueDate         DateTime?
+  completedDate   DateTime?
+  notes           String?
+  isDeleted       Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+}
