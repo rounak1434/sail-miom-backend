@@ -1,9 +1,7 @@
 const cron = require('node-cron');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { sendPushToUser, sendRoleNotification } = require('./notification.service');
 const { sendEmail } = require('./email.service');
-const prisma = new PrismaClient();
-
 const calculateSlaDeadline = async (priority) => {
   const config = await prisma.slaConfig.findFirst();
   const hours = {

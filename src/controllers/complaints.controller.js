@@ -1,9 +1,7 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { calculateSlaDeadline } = require('../services/sla.service');
 const { sendPushToUser } = require('../services/notification.service');
 const { getSignedDownloadUrl, deleteFromS3 } = require('../services/s3.service');
-const prisma = new PrismaClient();
-
 // Replace each attachment's fileUrl with a short-lived signed URL so private
 // S3 objects can be viewed. Falls back to the stored url if signing fails.
 async function signAttachments(attachments) {

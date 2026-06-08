@@ -1,10 +1,8 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { v4: uuidv4 } = require('uuid');
 const { getSignedDownloadUrl, deleteFromS3, uploadBuffer } = require('../services/s3.service');
 const { sendRoleNotification } = require('../services/notification.service');
 const { addWatermark } = require('../utils/pdfHelper');
-const prisma = new PrismaClient();
-
 const getDrawings = async (req, res) => {
   try {
     const { location_id, installation_type_id, type, search, page = 1, limit = 20 } = req.query;

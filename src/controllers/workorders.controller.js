@@ -1,6 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
-
+const prisma = require('../lib/prisma');
 const getWorkOrders = async (req, res) => {
   try {
     const { status, assigned_to, page = 1, limit = 20 } = req.query;

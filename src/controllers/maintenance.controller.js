@@ -1,8 +1,6 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { v4: uuidv4 } = require('uuid');
 const { uploadBuffer } = require('../services/s3.service');
-const prisma = new PrismaClient();
-
 // How many months to add per maintenance type
 const TYPE_MONTHS = {
   MONTHLY: 1,

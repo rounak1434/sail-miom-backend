@@ -1,7 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const bcrypt = require('bcryptjs');
-const prisma = new PrismaClient();
-
 const getUsers = async (req, res) => {
   try {
     const { role, location_id, search, page = 1, limit = 20 } = req.query;

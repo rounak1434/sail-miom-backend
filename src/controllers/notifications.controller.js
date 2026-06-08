@@ -1,7 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { sendPushToUser } = require('../services/notification.service');
-const prisma = new PrismaClient();
-
 const getNotifications = async (req, res) => {
   try {
     const { unread, page = 1, limit = 20 } = req.query;
