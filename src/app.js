@@ -16,8 +16,13 @@ const settingsRoutes = require('./routes/settings.routes');
 const workOrdersRoutes = require('./routes/workorders.routes');
 const { errorHandler } = require('./middleware/errorHandler');
 const { rateLimiter } = require('./middleware/rateLimiter');
+const prisma = require('./lib/prisma');
 
 const app = express();
+
+// Behind the Nginx reverse proxy — trust the first hop so req.ip and the rate
+// limiter see the real client IP (via X-Forwarded-For) instead of 127.0.0.1.
+app.set('trust proxy', 1);
 
 app.use(helmet());
 app.use(compression());
@@ -31,11 +36,25 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use('/api/', rateLimiter);
 
-app.get('/health', (req, res) => res.json({
-  status: 'ok',
-  service: 'SAIL-MIOM Backend',
-  timestamp: new Date().toISOString()
-}));
+app.get('/health', async (req, res) => {
+  try {
+    // Cheap liveness probe against Postgres so /health reflects DB availability.
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: 'ok',
+      service: 'SAIL-MIOM Backend',
+      database: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(503).json({
+      status: 'error',
+      service: 'SAIL-MIOM Backend',
+      database: 'disconnected',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/dashboard', dashboardRoutes);

@@ -10,4 +10,16 @@ const rateLimiter = rateLimit({
   legacyHeaders: false
 });
 
-module.exports = { rateLimiter };
+// Stricter limiter for the login endpoint to blunt credential brute-forcing.
+// Successful logins don't count (skipSuccessfulRequests), so a legitimate user
+// fat-fingering their password a few times still gets in once correct.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,                  // 10 failed attempts per IP per window
+  skipSuccessfulRequests: true,
+  message: { success: false, message: 'Too many login attempts, please try again in a few minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+module.exports = { rateLimiter, loginLimiter };
