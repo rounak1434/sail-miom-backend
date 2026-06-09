@@ -15,6 +15,7 @@ enum Role {
   ENGINEER
   CONTRACTOR
   STAFF
+  PENDING // Google self-signup, awaiting admin approval (no permissions, inactive)
 }
 
 enum Priority {
@@ -75,8 +76,10 @@ model User {
   id                   Int           @id @default(autoincrement())
   name                 String
   email                String        @unique
-  employeeId           String        @unique
-  password             String
+  employeeId           String?       @unique // null for Google self-signups until an admin assigns one
+  password             String?       // null for Google-only accounts (no local password)
+  googleId             String?       @unique // Google account subject id, set on Google sign-in
+  authProvider         String        @default("local") // "local" | "google"
   role                 Role          @default(ENGINEER)
   locationId           Int?
   location             Location?     @relation(fields: [locationId], references: [id])
