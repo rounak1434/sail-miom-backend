@@ -16,6 +16,7 @@ const settingsRoutes = require('./routes/settings.routes');
 const workOrdersRoutes = require('./routes/workorders.routes');
 const { errorHandler } = require('./middleware/errorHandler');
 const { rateLimiter } = require('./middleware/rateLimiter');
+const { getSmtpStatus } = require('./services/email.service');
 const prisma = require('./lib/prisma');
 
 const app = express();
@@ -44,6 +45,7 @@ app.get('/health', async (req, res) => {
       status: 'ok',
       service: 'SAIL-MIOM Backend',
       database: 'connected',
+      smtp: getSmtpStatus(),   // 'up' | 'down' | 'unconfigured' | 'unknown' — no secrets
       timestamp: new Date().toISOString()
     });
   } catch (err) {

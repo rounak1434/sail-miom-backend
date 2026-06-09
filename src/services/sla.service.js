@@ -62,7 +62,7 @@ const checkSlaBreaches = async () => {
         { complaintId: String(c.id), type: 'SLA_BREACHED' }
       );
 
-      // 2) Escalation email to admins/superadmins. Wrapped so an email/SendGrid
+      // 2) Escalation email to admins/superadmins. Wrapped so an email/SMTP
       //    failure can never break the cron run.
       try {
         const admins = await prisma.user.findMany({

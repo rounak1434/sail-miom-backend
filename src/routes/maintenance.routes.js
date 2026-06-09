@@ -19,5 +19,6 @@ router.get('/', authenticate, maintenanceController.getMaintenance);
 router.post('/', authenticate, authorize('ADMIN', 'SUPERADMIN'), maintenanceController.createMaintenance);
 router.put('/:id', authenticate, authorize('ENGINEER', 'CONTRACTOR', 'STAFF', 'ADMIN', 'SUPERADMIN'), maintenanceController.updateMaintenance);
 router.put('/:id/complete', authenticate, authorize('ENGINEER', 'CONTRACTOR', 'STAFF', 'ADMIN', 'SUPERADMIN'), photoUpload.array('photos', 5), maintenanceController.completeMaintenance);
+router.delete('/:id', authenticate, authorize('ADMIN', 'SUPERADMIN'), maintenanceController.deleteMaintenance);
 
 module.exports = router;

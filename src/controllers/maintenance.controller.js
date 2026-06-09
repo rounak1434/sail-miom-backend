@@ -151,7 +151,8 @@ const createMaintenance = async (req, res) => {
 
 const updateMaintenance = async (req, res) => {
   try {
-    const { status, completionNotes, notes, parts_used, cost } = req.body;
+    const b = req.body;
+    const { status, completionNotes, notes, parts_used, cost } = b;
     const updateData = {};
     if (status) updateData.status = status.toUpperCase();
     if (status === 'completed' || status === 'COMPLETED') {
@@ -161,6 +162,17 @@ const updateMaintenance = async (req, res) => {
     if (completionNotes || notes) updateData.notes = completionNotes || notes;
     if (parts_used) updateData.partsUsed = parts_used;
     if (cost) updateData.cost = parseFloat(cost);
+
+    // Editable schedule fields (accept both snake_case and camelCase keys)
+    if (b.title != null) updateData.title = b.title;
+    if (b.type != null) updateData.type = String(b.type).toUpperCase();
+    const locationId = b.location_id ?? b.locationId;
+    if (locationId != null && locationId !== '') updateData.locationId = parseInt(locationId);
+    const installationId = b.installation_id ?? b.installationId;
+    if (installationId != null && installationId !== '') updateData.installationId = parseInt(installationId);
+    const dueDate = b.due_date ?? b.dueDate;
+    if (dueDate) updateData.dueDate = new Date(dueDate);
+    if (Array.isArray(b.checklist)) updateData.checklist = b.checklist;
 
     const maintenance = await prisma.maintenance.update({
       where: { id: parseInt(req.params.id) },
@@ -172,4 +184,17 @@ const updateMaintenance = async (req, res) => {
   }
 };
 
-module.exports = { getMaintenance, completeMaintenance, createMaintenance, updateMaintenance };
+// Soft-delete (getMaintenance filters isDeleted:false), consistent with the rest of the schema.
+const deleteMaintenance = async (req, res) => {
+  try {
+    await prisma.maintenance.update({
+      where: { id: parseInt(req.params.id) },
+      data: { isDeleted: true }
+    });
+    res.json({ success: true, message: 'Maintenance schedule deleted' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { getMaintenance, completeMaintenance, createMaintenance, updateMaintenance, deleteMaintenance };

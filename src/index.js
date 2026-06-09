@@ -7,6 +7,7 @@ validateEnv();
 const app = require('./app');
 const prisma = require('./lib/prisma');
 const { startSlaMonitor } = require('./services/sla.service');
+const { verifyEmail } = require('./services/email.service');
 
 const PORT = process.env.PORT || 5000;
 
@@ -16,6 +17,9 @@ const server = app.listen(PORT, () => {
 
   // Start background services
   startSlaMonitor();
+
+  // Verify SMTP connectivity once at boot — logs result, never crashes.
+  verifyEmail();
 });
 
 server.on('error', (err) => {
