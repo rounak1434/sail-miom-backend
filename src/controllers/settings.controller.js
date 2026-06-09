@@ -16,21 +16,36 @@ const getLocations = async (req, res) => {
 
 const createLocation = async (req, res) => {
   try {
-    const location = await prisma.location.create({ data: req.body });
+    const name = req.body.name && String(req.body.name).trim();
+    const code = req.body.code && String(req.body.code).trim();
+    if (!name || !code) {
+      return res.status(400).json({ success: false, message: 'name and code are required' });
+    }
+    const location = await prisma.location.create({ data: { name, code } });
     res.status(201).json({ success: true, data: location });
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ success: false, message: 'A location with that code already exists.' });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
 const updateLocation = async (req, res) => {
   try {
+    // Only touch known columns (don't forward arbitrary req.body to Prisma).
+    const data = {};
+    if (req.body.name !== undefined) data.name = String(req.body.name).trim();
+    if (req.body.code !== undefined) data.code = String(req.body.code).trim();
     const location = await prisma.location.update({
       where: { id: parseInt(req.params.id) },
-      data: req.body,
+      data,
     });
     res.json({ success: true, data: location });
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ success: false, message: 'A location with that code already exists.' });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -59,9 +74,16 @@ const deleteLocation = async (req, res) => {
 
 const createInstallationType = async (req, res) => {
   try {
-    const type = await prisma.installationType.create({ data: req.body });
+    const name = req.body.name && String(req.body.name).trim();
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'name is required' });
+    }
+    const type = await prisma.installationType.create({ data: { name } });
     res.status(201).json({ success: true, data: type });
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ success: false, message: 'An installation type with that name already exists.' });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -82,12 +104,19 @@ const getInstallationTypes = async (req, res) => {
 
 const updateInstallationType = async (req, res) => {
   try {
+    const name = req.body.name && String(req.body.name).trim();
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'name is required' });
+    }
     const type = await prisma.installationType.update({
       where: { id: parseInt(req.params.id) },
-      data: { name: req.body.name }
+      data: { name }
     });
     res.json({ success: true, data: type });
   } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ success: false, message: 'An installation type with that name already exists.' });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
