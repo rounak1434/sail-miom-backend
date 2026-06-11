@@ -122,7 +122,10 @@ const createComplaint = async (req, res) => {
     // Accept both snake_case (web admin) and camelCase (mobile app) keys.
     const b = req.body;
     const title = b.title;
-    const description = b.description;
+    // description is non-nullable in the schema; coerce a missing value to ''
+    // so a client that omits it gets a clean response instead of a raw 500
+    // (which would also leak the server file path / record shape).
+    const description = b.description ?? '';
     const priority = b.priority;
     const location_id = b.location_id ?? b.locationId;
     const installation_type_id = b.installation_type_id ?? b.installationTypeId;
