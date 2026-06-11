@@ -16,6 +16,7 @@ enum Role {
   CONTRACTOR
   STAFF
   PENDING // Google self-signup, awaiting admin approval (no permissions, inactive)
+  PUBLIC  // Civilian self-signup for house-maintenance complaints (own complaints only)
 }
 
 enum Priority {
@@ -75,7 +76,7 @@ enum WorkOrderPriority {
 model User {
   id                   Int           @id @default(autoincrement())
   name                 String
-  email                String        @unique
+  email                String?       @unique // null for phone-only PUBLIC civilians
   employeeId           String?       @unique // null for Google self-signups until an admin assigns one
   password             String?       // null for Google-only accounts (no local password)
   googleId             String?       @unique // Google account subject id, set on Google sign-in
@@ -85,6 +86,7 @@ model User {
   location             Location?     @relation(fields: [locationId], references: [id])
   department           String?
   phone                String?
+  phoneNumber          String?       @unique // login identifier; required+unique for PUBLIC civilians
   profilePicUrl        String?
   isActive             Boolean       @default(true)
   pushTokens           PushToken[]
@@ -145,10 +147,17 @@ model Complaint {
   description        String
   priority           Priority
   status             ComplaintStatus  @default(OPEN)
-  locationId         Int
-  location           Location         @relation(fields: [locationId], references: [id])
-  installationTypeId Int
-  installationType   InstallationType @relation(fields: [installationTypeId], references: [id])
+  // Internal complaints reference a SAIL plant location/installation; PUBLIC
+  // (house-maintenance) complaints have none — they carry a free-text address.
+  source             String           @default("INTERNAL") // "INTERNAL" | "HOUSE"
+  address            String?          // civilian house address for HOUSE complaints
+  houseOwnerName     String?          // HOUSE complaint: resident's name
+  houseOwnerPhone    String?          // HOUSE complaint: contact number
+  landmark           String?          // HOUSE complaint: nearby landmark
+  locationId         Int?
+  location           Location?        @relation(fields: [locationId], references: [id])
+  installationTypeId Int?
+  installationType   InstallationType? @relation(fields: [installationTypeId], references: [id])
   installationId     Int?
   installation       Installation?    @relation(fields: [installationId], references: [id])
   safetyConcern      Boolean          @default(false)

@@ -15,16 +15,24 @@ const generateTokens = (userId, role) => ({
 
 const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await prisma.user.findUnique({
-      where: { email },
-      include: { location: true }
-    });
+    const { password } = req.body;
+    // Accept an email OR a phone number under any of these keys.
+    const identifier = String(
+      req.body.identifier ?? req.body.email ?? req.body.phoneNumber ?? req.body.phone ?? ''
+    ).trim();
+    if (!identifier || !password) {
+      return res.status(400).json({ success: false, message: 'Identifier and password are required' });
+    }
+
+    // An "@" means email; otherwise treat it as a phone number.
+    const isEmail = identifier.includes('@');
+    const where = isEmail ? { email: identifier.toLowerCase() } : { phoneNumber: identifier };
+    const user = await prisma.user.findUnique({ where, include: { location: true } });
 
     if (!user || !user.isActive) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: 'Invalid credentials'
       });
     }
 
@@ -50,6 +58,59 @@ const login = async (req, res) => {
 
     res.json({ success: true, token, refreshToken, user: userWithoutPassword });
   } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Public self-registration for civilians (house-maintenance complaints). Creates
+// an immediately-active PUBLIC account — no admin approval (unlike internal Google
+// signups). PUBLIC users can only file and track their own complaints.
+const register = async (req, res) => {
+  try {
+    const { name, password } = req.body;
+    const email = req.body.email && String(req.body.email).trim().toLowerCase();
+    const phoneNumber = (req.body.phoneNumber ?? req.body.phone_number ?? req.body.phone);
+    const phone = phoneNumber && String(phoneNumber).trim();
+
+    // PUBLIC civilians register with a phone number (email optional).
+    if (!name || !phone || !password) {
+      return res.status(400).json({ success: false, message: 'name, phone number and password are required' });
+    }
+    if (String(password).length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    }
+
+    // Enforce uniqueness on both identifiers (the DB also has unique indexes).
+    const clash = await prisma.user.findFirst({
+      where: { OR: [{ phoneNumber: phone }, ...(email ? [{ email }] : [])] },
+      select: { email: true, phoneNumber: true }
+    });
+    if (clash) {
+      const dupPhone = clash.phoneNumber === phone;
+      return res.status(409).json({
+        success: false,
+        message: dupPhone ? 'An account with this phone number already exists.'
+                          : 'An account with this email already exists.'
+      });
+    }
+
+    const hashed = await bcrypt.hash(password, 12);
+    const user = await prisma.user.create({
+      // Role is fixed to PUBLIC server-side — a client can never self-assign an internal role.
+      data: {
+        name, password: hashed, phoneNumber: phone,
+        email: email || null,
+        role: 'PUBLIC', isActive: true, authProvider: 'local'
+      },
+      include: { location: true }
+    });
+    const { token, refreshToken } = generateTokens(user.id, user.role);
+    const { password: _pw, ...safeUser } = user;
+    res.status(201).json({ success: true, token, refreshToken, user: safeUser });
+  } catch (error) {
+    if (error.code === 'P2002') {
+      return res.status(409).json({ success: false, message: 'An account with this phone or email already exists.' });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -148,7 +209,20 @@ const googleAuth = async (req, res) => {
     });
 
     if (!user) {
-      // New self-signup → inactive PENDING account; admin must approve before any access.
+      // Civilian signup screens send public:true → an immediately-active PUBLIC
+      // account. The role is fixed server-side; a client can only ever request
+      // PUBLIC, never an internal role.
+      const asPublic = req.body.public === true || req.body.asPublic === true;
+      if (asPublic) {
+        const created = await prisma.user.create({
+          data: { name, email, googleId, authProvider: 'google', role: 'PUBLIC', isActive: true },
+          include: { location: true }
+        });
+        const { token, refreshToken } = generateTokens(created.id, created.role);
+        const { password: _pw, ...safeUser } = created;
+        return res.status(201).json({ success: true, token, refreshToken, user: safeUser });
+      }
+      // Otherwise a new internal Google signup → inactive PENDING; admin must approve.
       await prisma.user.create({
         data: { name, email, googleId, authProvider: 'google', role: 'PENDING', isActive: false }
       });
@@ -182,4 +256,4 @@ const googleAuth = async (req, res) => {
   }
 };
 
-module.exports = { login, logout, refresh, changePassword, googleAuth };
+module.exports = { login, register, logout, refresh, changePassword, googleAuth };

@@ -43,6 +43,16 @@ const getComplaints = async (req, res) => {
     // Role-based filtering
     if (req.user.role === 'ENGINEER') where.raisedById = req.user.userId;
     if (req.user.role === 'CONTRACTOR') where.assignedToId = req.user.userId;
+    // PUBLIC civilians only ever see their OWN HOUSE-maintenance complaints —
+    // never internal SAIL complaints, and never anyone else's.
+    if (req.user.role === 'PUBLIC') {
+      where.raisedById = req.user.userId;
+      where.source = 'HOUSE';
+    }
+    // Optional source filter for internal staff (e.g. only show HOUSE complaints).
+    if (req.user.role !== 'PUBLIC' && (req.query.source === 'HOUSE' || req.query.source === 'INTERNAL')) {
+      where.source = req.query.source;
+    }
 
     const [data, total] = await Promise.all([
       prisma.complaint.findMany({
@@ -95,6 +105,11 @@ const getComplaintById = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Complaint not found' });
     }
 
+    // PUBLIC civilians may only view their own complaints.
+    if (req.user.role === 'PUBLIC' && complaint.raisedById !== req.user.userId) {
+      return res.status(404).json({ success: false, message: 'Complaint not found' });
+    }
+
     complaint.attachments = await signAttachments(complaint.attachments);
     res.json({ success: true, data: complaint });
   } catch (error) {
@@ -115,8 +130,24 @@ const createComplaint = async (req, res) => {
     const safety_concern = b.safety_concern ?? b.safetyConcern;
     const safety_description = b.safety_description ?? b.safetyDescription;
     const estimated_downtime = b.estimated_downtime ?? b.estimatedDowntime;
+    const address = b.address;
+    const house_owner_name = b.house_owner_name ?? b.houseOwnerName;
+    const house_owner_phone = b.house_owner_phone ?? b.houseOwnerPhone;
+    const landmark = b.landmark;
 
-    if (!title || !priority || !location_id || !installation_type_id) {
+    // PUBLIC (civilian house-maintenance) complaints have no SAIL plant
+    // location/installation — they carry an address instead. The backend, not
+    // the client, decides the source from the authenticated role.
+    const isPublic = req.user.role === 'PUBLIC';
+
+    if (isPublic) {
+      if (!title || !priority || !address) {
+        return res.status(400).json({
+          success: false,
+          message: 'title, priority and address are required'
+        });
+      }
+    } else if (!title || !priority || !location_id || !installation_type_id) {
       return res.status(400).json({
         success: false,
         message: 'title, priority, location and installation type are required'
@@ -136,8 +167,13 @@ const createComplaint = async (req, res) => {
           title,
           description,
           priority: priority.toUpperCase(),
-          locationId: parseInt(location_id),
-          installationTypeId: parseInt(installation_type_id),
+          source: isPublic ? 'HOUSE' : 'INTERNAL',
+          address: isPublic ? address : null,
+          houseOwnerName: isPublic ? (house_owner_name || req.user.name) : null,
+          houseOwnerPhone: isPublic ? (house_owner_phone || req.user.phoneNumber || null) : null,
+          landmark: isPublic ? (landmark || null) : null,
+          locationId: location_id ? parseInt(location_id) : null,
+          installationTypeId: installation_type_id ? parseInt(installation_type_id) : null,
           installationId: installation_id ? parseInt(installation_id) : null,
           safetyConcern: safety_concern || false,
           safetyDescription: safety_description,
