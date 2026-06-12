@@ -1,4 +1,25 @@
 const prisma = require('../lib/prisma');
+const { isAssignableRole } = require('../utils/roles');
+
+// Validate a proposed work-order assignee. Returns a friendly error message if
+// the user can't be assigned (missing, inactive, or a civilian/guest/pending
+// role), or null if the assignment is allowed. Work orders may only go to an
+// authenticated operational role — never to a civilian (PUBLIC / CIVILIAN_GUEST)
+// or a not-yet-approved (PENDING) account.
+async function validateAssignee(assignedToId) {
+  if (!assignedToId) return null; // unassigned is fine
+  const user = await prisma.user.findUnique({
+    where: { id: parseInt(assignedToId) },
+    select: { id: true, role: true, isActive: true }
+  });
+  if (!user) return 'Selected assignee was not found.';
+  if (!user.isActive) return 'Cannot assign a work order to an inactive account.';
+  if (!isAssignableRole(user.role)) {
+    return 'Cannot assign a work order to a civilian. Choose an engineer, contractor, staff member, or admin.';
+  }
+  return null;
+}
+
 const getWorkOrders = async (req, res) => {
   try {
     const { status, assigned_to, page = 1, limit = 20 } = req.query;
@@ -52,6 +73,11 @@ const createWorkOrder = async (req, res) => {
   try {
     const { title, description, priority, location_id, assigned_to_id, due_date, notes } = req.body;
 
+    const assigneeError = await validateAssignee(assigned_to_id);
+    if (assigneeError) {
+      return res.status(422).json({ success: false, message: assigneeError });
+    }
+
     const count = await prisma.workOrder.count();
     const workOrderNumber = `WO-${new Date().getFullYear()}-${String(count + 1).padStart(4, '0')}`;
 
@@ -83,6 +109,15 @@ const createWorkOrder = async (req, res) => {
 const updateWorkOrder = async (req, res) => {
   try {
     const { title, description, priority, location_id, assigned_to_id, due_date, notes, status } = req.body;
+
+    // Guard re-assignment too: a non-null assignee must be an operational role.
+    if (assigned_to_id !== undefined && assigned_to_id !== null && assigned_to_id !== '') {
+      const assigneeError = await validateAssignee(assigned_to_id);
+      if (assigneeError) {
+        return res.status(422).json({ success: false, message: assigneeError });
+      }
+    }
+
     const updateData = {};
 
     if (title) updateData.title = title;

@@ -1,7 +1,9 @@
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const prisma = require('../lib/prisma');
+const { sendEmail } = require('../services/email.service');
 
 const googleClient = new OAuth2Client();
 const generateTokens = (userId, role) => ({
@@ -58,59 +60,6 @@ const login = async (req, res) => {
 
     res.json({ success: true, token, refreshToken, user: userWithoutPassword });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// Public self-registration for civilians (house-maintenance complaints). Creates
-// an immediately-active PUBLIC account — no admin approval (unlike internal Google
-// signups). PUBLIC users can only file and track their own complaints.
-const register = async (req, res) => {
-  try {
-    const { name, password } = req.body;
-    const email = req.body.email && String(req.body.email).trim().toLowerCase();
-    const phoneNumber = (req.body.phoneNumber ?? req.body.phone_number ?? req.body.phone);
-    const phone = phoneNumber && String(phoneNumber).trim();
-
-    // PUBLIC civilians register with a phone number (email optional).
-    if (!name || !phone || !password) {
-      return res.status(400).json({ success: false, message: 'name, phone number and password are required' });
-    }
-    if (String(password).length < 8) {
-      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
-    }
-
-    // Enforce uniqueness on both identifiers (the DB also has unique indexes).
-    const clash = await prisma.user.findFirst({
-      where: { OR: [{ phoneNumber: phone }, ...(email ? [{ email }] : [])] },
-      select: { email: true, phoneNumber: true }
-    });
-    if (clash) {
-      const dupPhone = clash.phoneNumber === phone;
-      return res.status(409).json({
-        success: false,
-        message: dupPhone ? 'An account with this phone number already exists.'
-                          : 'An account with this email already exists.'
-      });
-    }
-
-    const hashed = await bcrypt.hash(password, 12);
-    const user = await prisma.user.create({
-      // Role is fixed to PUBLIC server-side — a client can never self-assign an internal role.
-      data: {
-        name, password: hashed, phoneNumber: phone,
-        email: email || null,
-        role: 'PUBLIC', isActive: true, authProvider: 'local'
-      },
-      include: { location: true }
-    });
-    const { token, refreshToken } = generateTokens(user.id, user.role);
-    const { password: _pw, ...safeUser } = user;
-    res.status(201).json({ success: true, token, refreshToken, user: safeUser });
-  } catch (error) {
-    if (error.code === 'P2002') {
-      return res.status(409).json({ success: false, message: 'An account with this phone or email already exists.' });
-    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -209,20 +158,9 @@ const googleAuth = async (req, res) => {
     });
 
     if (!user) {
-      // Civilian signup screens send public:true → an immediately-active PUBLIC
-      // account. The role is fixed server-side; a client can only ever request
-      // PUBLIC, never an internal role.
-      const asPublic = req.body.public === true || req.body.asPublic === true;
-      if (asPublic) {
-        const created = await prisma.user.create({
-          data: { name, email, googleId, authProvider: 'google', role: 'PUBLIC', isActive: true },
-          include: { location: true }
-        });
-        const { token, refreshToken } = generateTokens(created.id, created.role);
-        const { password: _pw, ...safeUser } = created;
-        return res.status(201).json({ success: true, token, refreshToken, user: safeUser });
-      }
-      // Otherwise a new internal Google signup → inactive PENDING; admin must approve.
+      // Civilian account creation has been removed — civilians now file
+      // complaints as guests (no account). A brand-new Google user is therefore
+      // always an internal signup → inactive PENDING; an admin must approve it.
       await prisma.user.create({
         data: { name, email, googleId, authProvider: 'google', role: 'PENDING', isActive: false }
       });
@@ -256,4 +194,95 @@ const googleAuth = async (req, res) => {
   }
 };
 
-module.exports = { login, register, logout, refresh, changePassword, googleAuth };
+// ─── Email-based password reset ──────────────────────────────────────────
+// Base URL of the web portal's reset page (the email links here). Falls back to
+// the deployed admin site so a missing env var still produces a usable link.
+const RESET_BASE_URL = (process.env.FRONTEND_URL || 'https://sail-miom-admin.vercel.app').replace(/\/+$/, '');
+const RESET_TOKEN_TTL_MIN = 30;
+
+const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
+
+// Step 1: request a reset link. ALWAYS responds 200 with the same message
+// whether or not the email exists, so the endpoint can't be used to enumerate
+// accounts. The actual email is only sent when a matching local account exists.
+const forgotPassword = async (req, res) => {
+  try {
+    const email = String(req.body.email ?? '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ success: false, message: 'A valid email is required' });
+    }
+
+    const generic = {
+      success: true,
+      message: 'If an account exists for that email, a password reset link has been sent.'
+    };
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    // Only local (password) accounts can reset a password. Google-only accounts
+    // have no password to reset — respond generically all the same.
+    if (!user || !user.isActive || user.authProvider === 'google') {
+      return res.json(generic);
+    }
+
+    // One active token per user: clear any earlier unused ones first.
+    await prisma.passwordResetToken.deleteMany({ where: { userId: user.id, usedAt: null } });
+
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MIN * 60 * 1000);
+    await prisma.passwordResetToken.create({
+      data: { userId: user.id, tokenHash: sha256(rawToken), expiresAt }
+    });
+
+    const link = `${RESET_BASE_URL}/reset-password?token=${rawToken}`;
+    const text = `Hello ${user.name},\n\nWe received a request to reset your SAIL-MIOM password. ` +
+      `Use the link below within ${RESET_TOKEN_TTL_MIN} minutes:\n\n${link}\n\n` +
+      `If you did not request this, you can safely ignore this email.`;
+    const html = `<p>Hello ${user.name},</p>` +
+      `<p>We received a request to reset your <strong>SAIL-MIOM</strong> password. ` +
+      `This link expires in ${RESET_TOKEN_TTL_MIN} minutes:</p>` +
+      `<p><a href="${link}">Reset your password</a></p>` +
+      `<p>If you did not request this, you can safely ignore this email.</p>`;
+    // Fail-soft: if SMTP is unconfigured/down, sendEmail logs and returns; we
+    // still respond generically so the flow never leaks delivery state.
+    await sendEmail(user.email, 'Reset your SAIL-MIOM password', text, html);
+
+    return res.json(generic);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Step 2: complete the reset with the emailed token + a new password.
+const resetPassword = async (req, res) => {
+  try {
+    const token = String(req.body.token ?? '').trim();
+    const newPassword = String(req.body.newPassword ?? req.body.password ?? '');
+    if (!token || !newPassword) {
+      return res.status(400).json({ success: false, message: 'token and newPassword are required' });
+    }
+    if (newPassword.length < 8) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    }
+
+    const record = await prisma.passwordResetToken.findUnique({
+      where: { tokenHash: sha256(token) }
+    });
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      return res.status(400).json({ success: false, message: 'This reset link is invalid or has expired. Please request a new one.' });
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 12);
+    await prisma.$transaction([
+      prisma.user.update({ where: { id: record.userId }, data: { password: hashed } }),
+      prisma.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } }),
+      // Burn any other outstanding tokens for this user.
+      prisma.passwordResetToken.deleteMany({ where: { userId: record.userId, usedAt: null } })
+    ]);
+
+    res.json({ success: true, message: 'Password reset successfully. You can now sign in with your new password.' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+module.exports = { login, logout, refresh, changePassword, googleAuth, forgotPassword, resetPassword };

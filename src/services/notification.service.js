@@ -15,6 +15,8 @@ const client = new OneSignal.DefaultApi(configuration);
  */
 const sendPushToUser = async (userId, title, body, data = {}) => {
   try {
+    // Guest complaints have no raiser (userId null) — nothing to notify.
+    if (!userId) return;
     const user = await prisma.user.findUnique({
       where: { id: userId },
       include: { pushTokens: true }

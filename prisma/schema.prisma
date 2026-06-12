@@ -16,7 +16,8 @@ enum Role {
   CONTRACTOR
   STAFF
   PENDING // Google self-signup, awaiting admin approval (no permissions, inactive)
-  PUBLIC  // Civilian self-signup for house-maintenance complaints (own complaints only)
+  PUBLIC  // Legacy civilian self-signup (account creation removed; kept for existing rows)
+  CIVILIAN_GUEST // No-account civilian guest; never a real User — used as the marker on guest complaints
 }
 
 enum Priority {
@@ -90,6 +91,7 @@ model User {
   profilePicUrl        String?
   isActive             Boolean       @default(true)
   pushTokens           PushToken[]
+  passwordResets       PasswordResetToken[]
   complaintsRaised     Complaint[]   @relation("RaisedBy")
   complaintsAssigned   Complaint[]   @relation("AssignedTo")
   complaintUpdates     ComplaintUpdate[]
@@ -147,13 +149,17 @@ model Complaint {
   description        String
   priority           Priority
   status             ComplaintStatus  @default(OPEN)
-  // Internal complaints reference a SAIL plant location/installation; PUBLIC
-  // (house-maintenance) complaints have none — they carry a free-text address.
-  source             String           @default("INTERNAL") // "INTERNAL" | "HOUSE"
-  address            String?          // civilian house address for HOUSE complaints
+  // Internal complaints reference a SAIL plant location/installation; HOUSE /
+  // CIVILIAN_GUEST complaints have none — they carry a free-text address.
+  source             String           @default("INTERNAL") // "INTERNAL" | "HOUSE" | "CIVILIAN_GUEST"
+  address            String?          // civilian house address for HOUSE / guest complaints
   houseOwnerName     String?          // HOUSE complaint: resident's name
   houseOwnerPhone    String?          // HOUSE complaint: contact number
   landmark           String?          // HOUSE complaint: nearby landmark
+  // CIVILIAN_GUEST complaints have no User row — contact details live here instead.
+  guestName          String?          // guest's name (required at submit)
+  guestPhone         String?          // guest's contact number (required at submit)
+  guestEmail         String?          // guest's email (optional)
   locationId         Int?
   location           Location?        @relation(fields: [locationId], references: [id])
   installationTypeId Int?
@@ -163,8 +169,10 @@ model Complaint {
   safetyConcern      Boolean          @default(false)
   safetyDescription  String?
   estimatedDowntime  String?
-  raisedById         Int
-  raisedBy           User             @relation("RaisedBy", fields: [raisedById], references: [id])
+  // Nullable: CIVILIAN_GUEST complaints are filed with no account, so there is
+  // no raiser User — the guest's contact details are stored on this row instead.
+  raisedById         Int?
+  raisedBy           User?            @relation("RaisedBy", fields: [raisedById], references: [id])
   assignedToId       Int?
   assignedTo         User?            @relation("AssignedTo", fields: [assignedToId], references: [id])
   slaDeadline        DateTime
@@ -186,8 +194,10 @@ model ComplaintUpdate {
   fromStatus  String?
   toStatus    String?
   note        String?
-  userId      Int
-  user        User      @relation(fields: [userId], references: [id])
+  // Nullable: a CIVILIAN_GUEST has no User, so the "created" entry for a guest
+  // complaint has no actor (the timeline renders these as "System").
+  userId      Int?
+  user        User?     @relation(fields: [userId], references: [id])
   createdAt   DateTime  @default(now())
 }
 
@@ -352,4 +362,18 @@ model WorkOrder {
   isDeleted       Boolean           @default(false)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
+}
+
+// Email-based password reset. The raw token is emailed to the user; only its
+// SHA-256 hash is stored. Single-use (usedAt) and short-lived (expiresAt).
+model PasswordResetToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }

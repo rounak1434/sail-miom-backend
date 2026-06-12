@@ -12,6 +12,9 @@ const RECOMMENDED = [
   'AWS_SECRET_ACCESS_KEY',
   'AWS_REGION',
   'AWS_S3_BUCKET',
+  // Base URL of the web portal — used to build password-reset links in emails.
+  // Falls back to the deployed admin site if unset, so it's recommended not required.
+  'FRONTEND_URL',
 ];
 
 function validateEnv() {

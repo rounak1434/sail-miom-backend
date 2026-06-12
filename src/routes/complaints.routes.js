@@ -3,6 +3,11 @@ const router = express.Router();
 const complaintsController = require('../controllers/complaints.controller');
 const { authenticate, authorize } = require('../middleware/auth');
 const { attachmentUpload } = require('../middleware/upload');
+const { guestComplaintLimiter } = require('../middleware/rateLimiter');
+
+// PUBLIC, no-auth civilian guest submission (IP rate-limited). Must be declared
+// before the authenticated routes so it isn't shadowed by '/:id'.
+router.post('/guest', guestComplaintLimiter, complaintsController.createGuestComplaint);
 
 router.get('/', authenticate, complaintsController.getComplaints);
 router.get('/:id/timeline', authenticate, complaintsController.getTimeline);

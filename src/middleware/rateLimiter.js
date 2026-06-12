@@ -22,4 +22,24 @@ const loginLimiter = rateLimit({
   legacyHeaders: false
 });
 
-module.exports = { rateLimiter, loginLimiter };
+// Password-reset request/complete: strict per-IP cap so the endpoints can't be
+// used to spam reset emails or brute-force tokens. Every request counts.
+const passwordResetLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,                   // 5 attempts per IP per window
+  message: { success: false, message: 'Too many password reset attempts, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Guest (civilian, no-account) complaint submission: per-IP cap so the open,
+// unauthenticated endpoint can't be flooded.
+const guestComplaintLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,                  // 10 guest complaints per IP per hour
+  message: { success: false, message: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+module.exports = { rateLimiter, loginLimiter, passwordResetLimiter, guestComplaintLimiter };

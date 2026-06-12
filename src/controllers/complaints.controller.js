@@ -206,6 +206,87 @@ const createComplaint = async (req, res) => {
   }
 };
 
+// Civilian GUEST complaint — no login, no account. The submitter supplies their
+// name/phone/address (email optional); the complaint is stored with
+// source=CIVILIAN_GUEST and NO raiser User. They get a reference number back to
+// quote later (there is no in-app tracking for guests). IP-rate-limited in the route.
+const createGuestComplaint = async (req, res) => {
+  try {
+    const b = req.body;
+    const name = String(b.name ?? b.guestName ?? b.houseOwnerName ?? '').trim();
+    const phone = String(b.phone ?? b.phoneNumber ?? b.guestPhone ?? b.houseOwnerPhone ?? '').trim();
+    const address = String(b.address ?? '').trim();
+    const emailRaw = String(b.email ?? b.guestEmail ?? '').trim();
+    const email = emailRaw ? emailRaw.toLowerCase() : null;
+    const title = String(b.title ?? '').trim();
+    const description = String(b.description ?? '').trim();
+    const landmark = b.landmark ? String(b.landmark).trim() : null;
+    const priority = String(b.priority ?? 'MEDIUM').toUpperCase();
+
+    // Required: name, phone, address, and an issue title. Email is optional.
+    if (!name || !phone || !address || !title) {
+      return res.status(400).json({
+        success: false,
+        message: 'name, phone number, address and a complaint title are required'
+      });
+    }
+    if (email && !email.includes('@')) {
+      return res.status(400).json({ success: false, message: 'Enter a valid email address' });
+    }
+    const VALID_PRIORITIES = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+    const finalPriority = VALID_PRIORITIES.includes(priority) ? priority : 'MEDIUM';
+
+    const year = new Date().getFullYear();
+    const suffix = Date.now().toString(36).slice(-4).toUpperCase() +
+                   Math.random().toString(36).slice(-2).toUpperCase();
+    const complaintNumber = `MIOM-${year}-${suffix}`;
+    const slaDeadline = await calculateSlaDeadline(finalPriority);
+
+    const complaint = await prisma.$transaction(async (tx) => {
+      const created = await tx.complaint.create({
+        data: {
+          complaintNumber,
+          title,
+          description,
+          priority: finalPriority,
+          source: 'CIVILIAN_GUEST',
+          address,
+          landmark,
+          houseOwnerName: name,
+          houseOwnerPhone: phone,
+          guestName: name,
+          guestPhone: phone,
+          guestEmail: email,
+          raisedById: null, // no account — guest complaint
+          slaDeadline
+        }
+      });
+      await tx.complaintUpdate.create({
+        data: {
+          complaintId: created.id,
+          action: 'Complaint created (civilian guest)',
+          userId: null // no actor — guest has no User row
+        }
+      });
+      return created;
+    });
+
+    // Return only what a guest needs: the reference number to quote later.
+    res.status(201).json({
+      success: true,
+      data: {
+        id: complaint.id,
+        complaintNumber: complaint.complaintNumber,
+        referenceNumber: complaint.complaintNumber,
+        status: complaint.status
+      },
+      message: 'Complaint submitted. Please save your reference number.'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const assignComplaint = async (req, res) => {
   try {
     const b = req.body;
@@ -397,7 +478,7 @@ const deleteAttachment = async (req, res) => {
 };
 
 module.exports = {
-  getComplaints, getComplaintById, createComplaint,
+  getComplaints, getComplaintById, createComplaint, createGuestComplaint,
   assignComplaint, updateComplaintStatus, deleteComplaint, addComment,
   getTimeline, addAttachments, deleteAttachment
 };
