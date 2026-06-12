@@ -1,4 +1,5 @@
 const prisma = require('../lib/prisma');
+const { validateAssignee } = require('../utils/assignment');
 const { calculateSlaDeadline } = require('../services/sla.service');
 const { sendPushToUser } = require('../services/notification.service');
 const { getSignedDownloadUrl, deleteFromS3 } = require('../services/s3.service');
@@ -296,6 +297,14 @@ const assignComplaint = async (req, res) => {
 
     if (!assignedToId) {
       return res.status(400).json({ success: false, message: 'assignee is required' });
+    }
+
+    // Same policy as work orders: complaints may only be assigned to an
+    // operational role — never a civilian (PUBLIC / CIVILIAN_GUEST), a
+    // not-yet-approved (PENDING), or an inactive account.
+    const assigneeError = await validateAssignee(assignedToId, 'complaint');
+    if (assigneeError) {
+      return res.status(422).json({ success: false, message: assigneeError });
     }
 
     const complaint = await prisma.complaint.update({

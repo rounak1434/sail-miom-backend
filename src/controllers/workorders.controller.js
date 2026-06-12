@@ -1,24 +1,5 @@
 const prisma = require('../lib/prisma');
-const { isAssignableRole } = require('../utils/roles');
-
-// Validate a proposed work-order assignee. Returns a friendly error message if
-// the user can't be assigned (missing, inactive, or a civilian/guest/pending
-// role), or null if the assignment is allowed. Work orders may only go to an
-// authenticated operational role — never to a civilian (PUBLIC / CIVILIAN_GUEST)
-// or a not-yet-approved (PENDING) account.
-async function validateAssignee(assignedToId) {
-  if (!assignedToId) return null; // unassigned is fine
-  const user = await prisma.user.findUnique({
-    where: { id: parseInt(assignedToId) },
-    select: { id: true, role: true, isActive: true }
-  });
-  if (!user) return 'Selected assignee was not found.';
-  if (!user.isActive) return 'Cannot assign a work order to an inactive account.';
-  if (!isAssignableRole(user.role)) {
-    return 'Cannot assign a work order to a civilian. Choose an engineer, contractor, staff member, or admin.';
-  }
-  return null;
-}
+const { validateAssignee } = require('../utils/assignment');
 
 const getWorkOrders = async (req, res) => {
   try {

@@ -29,3 +29,11 @@ test('rate limiter exposes the new limiters', () => {
   assert.equal(typeof rl.passwordResetLimiter, 'function');
   assert.equal(typeof rl.guestComplaintLimiter, 'function');
 });
+
+test('shared validateAssignee is reused by both controllers', () => {
+  const { validateAssignee } = require('../src/utils/assignment');
+  assert.equal(typeof validateAssignee, 'function');
+  // Both the work-order and complaint controllers must load with the shared guard.
+  assert.doesNotThrow(() => require('../src/controllers/workorders.controller'));
+  assert.doesNotThrow(() => require('../src/controllers/complaints.controller'));
+});
