@@ -314,8 +314,10 @@ const exportComplaintsExcel = async (req, res) => {
         status: c.status,
         priority: c.priority,
         slaBreached: c.isSlaBreached ? 'YES' : 'No',
-        location: c.location.name,
-        raisedBy: c.raisedBy.name,
+        // Guest (CIVILIAN_GUEST) complaints have no location/raiser relation —
+        // fall back to the address / stored guest name so the export can't 500.
+        location: c.location?.name || c.address || '—',
+        raisedBy: c.raisedBy?.name || c.guestName || 'Civilian Guest',
         assignedTo: c.assignedTo?.name || 'Unassigned',
         slaDeadline: c.slaDeadline,
         createdAt: c.createdAt

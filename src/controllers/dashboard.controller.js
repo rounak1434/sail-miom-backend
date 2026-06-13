@@ -57,7 +57,9 @@ const getStats = async (req, res) => {
       success: true,
       data: {
         totalComplaints,
-        openComplaints,
+        // "Open" = everything not yet resolved (OPEN + IN_PROGRESS), per spec.
+        // statusBreakdown.open below still carries the strict OPEN-only count.
+        openComplaints: totalComplaints - resolvedComplaints,
         resolvedToday,
         slaBreached,
         slaMet: totalMet,

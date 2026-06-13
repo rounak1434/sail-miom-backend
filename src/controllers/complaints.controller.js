@@ -238,12 +238,19 @@ const createGuestComplaint = async (req, res) => {
     const finalPriority = VALID_PRIORITIES.includes(priority) ? priority : 'MEDIUM';
 
     const year = new Date().getFullYear();
-    const suffix = Date.now().toString(36).slice(-4).toUpperCase() +
-                   Math.random().toString(36).slice(-2).toUpperCase();
-    const complaintNumber = `MIOM-${year}-${suffix}`;
     const slaDeadline = await calculateSlaDeadline(finalPriority);
 
     const complaint = await prisma.$transaction(async (tx) => {
+      // Civilian-guest complaints get a human-friendly SEQUENTIAL number
+      // (MIOM-YYYY-000001). The per-year counter is bumped atomically with an
+      // INSERT … ON CONFLICT so concurrent guest submissions never collide.
+      const rows = await tx.$queryRaw`
+        INSERT INTO "ComplaintCounter" ("year", "lastSeq") VALUES (${year}, 1)
+        ON CONFLICT ("year") DO UPDATE SET "lastSeq" = "ComplaintCounter"."lastSeq" + 1
+        RETURNING "lastSeq"`;
+      const seq = Number(rows[0].lastSeq);
+      const complaintNumber = `MIOM-${year}-${String(seq).padStart(6, '0')}`;
+
       const created = await tx.complaint.create({
         data: {
           complaintNumber,
@@ -282,6 +289,73 @@ const createGuestComplaint = async (req, res) => {
         status: complaint.status
       },
       message: 'Complaint submitted. Please save your reference number.'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Public complaint tracking — no auth. A civilian proves ownership with the
+// complaint number AND the phone number they filed under; only then is the
+// complaint returned. Any mismatch (wrong number OR wrong phone) returns the
+// SAME 404 so the endpoint can't be used to enumerate complaints. Rate-limited.
+const trackComplaint = async (req, res) => {
+  try {
+    const complaintNumber = String(req.body.complaintNumber ?? req.body.complaint_number ?? '').trim();
+    const phone = String(req.body.phone ?? req.body.phoneNumber ?? req.body.mobile ?? '').trim();
+    if (!complaintNumber || !phone) {
+      return res.status(400).json({ success: false, message: 'Complaint number and phone number are required' });
+    }
+
+    const complaint = await prisma.complaint.findFirst({
+      where: { complaintNumber, isDeleted: false },
+      include: {
+        installationType: true,
+        location: true,
+        assignedTo: { select: { name: true, role: true } },
+        updates: {
+          orderBy: { createdAt: 'asc' },
+          select: { action: true, toStatus: true, note: true, createdAt: true }
+        }
+      }
+    });
+
+    // Ownership check: the phone must match what was filed (guest or house owner).
+    const phoneMatch =
+      complaint &&
+      [complaint.guestPhone, complaint.houseOwnerPhone]
+        .filter(Boolean)
+        .some((p) => String(p).trim() === phone);
+
+    if (!complaint || !phoneMatch) {
+      return res.status(404).json({
+        success: false,
+        message: 'No complaint found for that number and phone. Check both and try again.'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        complaintNumber: complaint.complaintNumber,
+        title: complaint.title,
+        description: complaint.description,
+        status: complaint.status,
+        priority: complaint.priority,
+        category: complaint.installationType?.name
+          ?? (complaint.source === 'CIVILIAN_GUEST' ? 'Civilian Complaint' : complaint.source),
+        location: complaint.location?.name ?? complaint.address ?? null,
+        createdAt: complaint.createdAt,
+        updatedAt: complaint.updatedAt,
+        assignedRole: complaint.assignedTo?.role ?? null,
+        assignedUser: complaint.assignedTo?.name ?? null,
+        timeline: complaint.updates.map((u) => ({
+          action: u.action,
+          status: u.toStatus ?? null,
+          note: u.note ?? null,
+          at: u.createdAt
+        }))
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -343,13 +417,25 @@ const assignComplaint = async (req, res) => {
 const updateComplaintStatus = async (req, res) => {
   try {
     const { status, note } = req.body;
+    const newStatus = status.toUpperCase();
     const oldComplaint = await prisma.complaint.findUnique({
       where: { id: parseInt(req.params.id) }
     });
 
+    // SLA is decided at the moment of resolution: a complaint is BREACHED only
+    // if it is resolved/closed AFTER its deadline (or stays open past it — that
+    // path is handled by the cron). Recomputing here clears stale breach flags
+    // left by the cron when a complaint is later resolved on time.
+    const updateData = { status: newStatus };
+    if (newStatus === 'RESOLVED' || newStatus === 'CLOSED') {
+      const breachedLate = !!oldComplaint.slaDeadline && new Date() > oldComplaint.slaDeadline;
+      updateData.isSlaBreached = breachedLate;
+      updateData.slaBreachedAt = breachedLate ? (oldComplaint.slaBreachedAt ?? new Date()) : null;
+    }
+
     const complaint = await prisma.complaint.update({
       where: { id: parseInt(req.params.id) },
-      data: { status: status.toUpperCase() }
+      data: updateData
     });
 
     await prisma.complaintUpdate.create({
@@ -357,19 +443,21 @@ const updateComplaintStatus = async (req, res) => {
         complaintId: complaint.id,
         action: `Status changed to ${status}`,
         fromStatus: oldComplaint.status,
-        toStatus: status.toUpperCase(),
+        toStatus: newStatus,
         note,
         userId: req.user.userId
       }
     });
 
-    // Notify complaint raiser
-    await sendPushToUser(
-      complaint.raisedById,
-      'Complaint Updated',
-      `Status changed to ${status}`,
-      { complaintId: String(complaint.id), type: 'COMPLAINT_UPDATED' }
-    );
+    // Notify complaint raiser (guest complaints have no raiser → skip).
+    if (complaint.raisedById) {
+      await sendPushToUser(
+        complaint.raisedById,
+        'Complaint Updated',
+        `Status changed to ${status}`,
+        { complaintId: String(complaint.id), type: 'COMPLAINT_UPDATED' }
+      );
+    }
 
     res.json({ success: true, data: complaint });
   } catch (error) {
@@ -488,6 +576,7 @@ const deleteAttachment = async (req, res) => {
 
 module.exports = {
   getComplaints, getComplaintById, createComplaint, createGuestComplaint,
+  trackComplaint,
   assignComplaint, updateComplaintStatus, deleteComplaint, addComment,
   getTimeline, addAttachments, deleteAttachment
 };

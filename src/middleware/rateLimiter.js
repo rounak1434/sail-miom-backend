@@ -42,4 +42,14 @@ const guestComplaintLimiter = rateLimit({
   legacyHeaders: false
 });
 
-module.exports = { rateLimiter, loginLimiter, passwordResetLimiter, guestComplaintLimiter };
+// Public complaint tracking (no auth): per-IP cap to blunt enumeration/brute
+// force of the number+phone lookup, while allowing a civilian a few retries.
+const trackComplaintLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,                  // 30 lookups per IP per window
+  message: { success: false, message: 'Too many tracking attempts, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+module.exports = { rateLimiter, loginLimiter, passwordResetLimiter, guestComplaintLimiter, trackComplaintLimiter };

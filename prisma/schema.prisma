@@ -364,6 +364,15 @@ model WorkOrder {
   updatedAt       DateTime          @updatedAt
 }
 
+// Atomic per-year counter for civilian-guest complaint numbers (MIOM-YYYY-000001).
+// Incremented inside the guest-complaint transaction via an INSERT … ON CONFLICT
+// so concurrent submissions never collide. Internal complaints keep their own
+// (random) numbering and do not use this table.
+model ComplaintCounter {
+  year    Int @id
+  lastSeq Int @default(0)
+}
+
 // Email-based password reset. The raw token is emailed to the user; only its
 // SHA-256 hash is stored. Single-use (usedAt) and short-lived (expiresAt).
 model PasswordResetToken {
